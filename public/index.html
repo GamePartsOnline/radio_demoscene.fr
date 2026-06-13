@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DEMOSCENE.FR - Radio Automatique</title>
+    <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <style>
+        :root { --accent: #00e5ff; --bg: #0a0a0c; --panel: #141418; }
+        body { background: var(--bg); color: #c0c0c0; font-family: 'Share Tech Mono', monospace; padding-top: 120px; }
+        
+        /* Lecteur Haut Opaque - Inspiré de Callisto */
+        .header-player {
+            position: fixed; top: 0; left: 0; width: 100%; height: 110px;
+            background: #000; border-bottom: 2px solid var(--accent);
+            z-index: 2000; padding: 0 30px; display: flex; align-items: center;
+        }
+
+        .brand { font-size: 1.5rem; font-weight: bold; color: var(--accent); text-transform: uppercase; border-right: 1px solid #333; padding-right: 30px; margin-right: 30px; height: 100%; display: flex; align-items: center; }
+
+        .player-controls { display: flex; align-items: center; gap: 15px; }
+        .control-btn { background: none; border: 1px solid #333; color: #fff; width: 40px; height: 40px; border-radius: 50%; transition: 0.3s; }
+        .control-btn:hover { border-color: var(--accent); color: var(--accent); }
+        .control-btn.main { width: 55px; height: 55px; border-color: var(--accent); color: var(--accent); font-size: 1.2rem; }
+
+        .track-info-box { flex-grow: 1; margin: 0 40px; overflow: hidden; }
+        #now-playing { font-weight: bold; white-space: nowrap; animation: marquee 15s linear infinite; }
+        @keyframes marquee { 0% { transform: translateX(100%); } 100% { transform: translateX(-100%); } }
+
+        .progress-container { height: 4px; background: #222; width: 100%; margin-top: 10px; position: relative; cursor: pointer; }
+        .progress-bar { height: 100%; background: var(--accent); width: 0%; box-shadow: 0 0 10px var(--accent); }
+
+        /* Main Content */
+        .scene-card { background: var(--panel); border: 1px solid #222; padding: 25px; height: 100%; border-radius: 4px; }
+        .track-item { padding: 12px; border-bottom: 1px solid #222; cursor: pointer; transition: 0.2s; display: flex; justify-content: space-between; align-items: center; }
+        .track-item:hover { background: #1a1a20; }
+        .track-item.active { border-left: 4px solid var(--accent); background: #16161c; }
+        
+        .drop-zone { border: 2px dashed #333; padding: 30px; text-align: center; background: #0c0c0e; transition: 0.3s; }
+        .drop-zone:hover { border-color: var(--accent); background: #101015; }
+
+        /* Podcast Styles */
+        .podcast-item { padding: 15px; border-bottom: 1px solid #222; cursor: pointer; transition: 0.2s; border-left: 2px solid transparent; }
+        .podcast-item:hover { background: #1a1a20; border-left-color: #ffaa00; }
+        .podcast-item.active { background: #1a1a20; border-left-color: #ffaa00; }
+        .btn-toggle-view { font-size: 0.7rem; padding: 2px 10px; border: 1px solid #333; background: none; color: #666; cursor: pointer; }
+        .btn-toggle-view.active { color: var(--accent); border-color: var(--accent); }
+
+        /* Tracker View Styles */
+        #tracker-view { 
+            display: none; position: fixed; top: 110px; left: 0; width: 100%; height: calc(100% - 110px); 
+            background: #000; z-index: 1500; overflow: hidden; font-family: 'Share Tech Mono', monospace; 
+        }
+        #tracker-canvas { width: 100%; height: 100%; image-rendering: pixelated; }
+        .tracker-toggle { 
+            background: none; border: 1px solid #333; color: var(--accent); font-size: 0.7rem; 
+            padding: 5px 10px; margin-left: 20px; cursor: pointer; text-transform: uppercase; 
+            letter-spacing: 1px; transition: 0.3s; 
+        }
+        .tracker-toggle:hover, .tracker-toggle.active { background: var(--accent); color: #000; box-shadow: 0 0 10px var(--accent); }
+    </style>
+</head>
+<body>
+
+    <div class="header-player shadow-lg">
+        <div class="brand">DemoScene.fr</div>
+        
+        <div class="player-controls">
+            <button class="control-btn" onclick="prev()"><i class="fas fa-backward"></i></button>
+            <button class="control-btn main" onclick="togglePlay()"><i class="fas fa-play" id="playIcon"></i></button>
+            <button class="control-btn" onclick="next()"><i class="fas fa-forward"></i></button>
+        </div>
+
+        <div class="track-info-box">
+            <div id="now-playing" style="color: #39ff14;">INITIALISATION DE LA STATION...</div>
+            <div class="progress-container" onclick="seek(event)">
+                <div class="progress-bar" id="pb"></div>
+            </div>
+        </div>
+
+        <div class="d-flex align-items-center">
+            <i class="fas fa-volume-up me-3"></i>
+            <input type="range" class="form-range" style="width: 100px;" id="volume" min="0" max="1" step="0.01" value="0.05">
+            <button class="tracker-toggle" onclick="toggleTrackerMode()" id="trackerBtn">Tracker_Mode</button>
+        </div>
+    </div>
+
+    <!-- Mode Tracker View -->
+    <div id="tracker-view">
+        <canvas id="tracker-canvas"></canvas>
+    </div>
+
+    <!-- Hidden HTML5 Audio Tag (Le plus robuste) -->
+    <audio id="audio" crossorigin="anonymous"></audio>
+
+    <main class="container-fluid px-4">
+        <div class="row g-4">
+            <!-- Colonne GAUCHE : Transmission & Galerie -->
+            <div class="col-lg-6">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <div class="scene-card h-100">
+                            <h6 class="text-uppercase fw-bold mb-3 small" style="color: var(--accent)">Transmission_Audio</h6>
+                            <form id="uploadForm">
+                                <input type="text" class="form-control form-control-sm bg-dark border-0 text-white mb-2" id="author" placeholder="PSEUDO_SCENER">
+                                <div class="drop-zone py-3 mb-2" onclick="document.getElementById('file').click()" style="padding: 10px !important;">
+                                    <i class="fas fa-upload mb-1 opacity-50"></i>
+                                    <div style="font-size: 0.65rem;">CLIQUEZ : MODULE</div>
+                                    <input type="file" id="file" hidden>
+                                </div>
+                                <button type="submit" class="btn btn-sm btn-outline-info w-100 fw-bold" style="font-size: 0.7rem;">ENVOYER AUDIO</button>
+                            </form>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="scene-card h-100">
+                            <h6 class="text-uppercase fw-bold mb-3 small" style="color: var(--accent)">Transmission_Graphic</h6>
+                            <form id="graphicUploadForm">
+                                <input type="text" class="form-control form-control-sm bg-dark border-0 text-white mb-2" id="graphicAuthor" placeholder="PSEUDO_GRAPHISTE">
+                                <div class="drop-zone py-3 mb-2" onclick="document.getElementById('img-file').click()" style="padding: 10px !important;">
+                                    <i class="fas fa-image mb-1 opacity-50"></i>
+                                    <div id="img-label" style="font-size: 0.65rem;">CLIQUEZ : IMAGE</div>
+                                    <input type="file" id="img-file" hidden onchange="document.getElementById('img-label').textContent = this.files[0].name">
+                                </div>
+                                <button type="submit" class="btn btn-sm btn-outline-info w-100 fw-bold" style="font-size: 0.7rem;">ENVOYER IMAGE</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Galerie en mode PAYSAGE (Large) -->
+                <div class="scene-card mt-4 p-0 overflow-hidden">
+                    <div class="p-2 border-bottom border-secondary d-flex justify-content-between align-items-center bg-dark" style="background: rgba(255,255,255,0.03) !important;">
+                        <span class="small opacity-75 fw-bold" style="font-size: 0.7rem; color: var(--accent)">SCENE_GALLERY</span>
+                        <span id="graphic-info" class="small opacity-50" style="font-size: 0.6rem;"></span>
+                    </div>
+                    <div style="aspect-ratio: 16/9; width: 100%; background: #000; display: flex; align-items: center; justify-content: center; position: relative;">
+                        <img id="scener-img" src="" style="max-width: 100%; max-height: 100%; object-fit: contain; display: none;">
+                        <div id="img-placeholder" class="w-100 h-100 d-flex align-items-center justify-content-center opacity-25">
+                            <i class="fas fa-image fa-3x"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Colonne DROITE : Playlist & Podcasts -->
+            <div class="col-lg-6">
+                <div class="scene-card" style="height: calc(100vh - 160px);">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div class="d-flex gap-2">
+                            <button id="viewMusique" class="btn-toggle-view active" onclick="switchView('musique')">MUSIQUE</button>
+                            <button id="viewPodcasts" class="btn-toggle-view" onclick="switchView('podcasts')">PODCASTS_FR</button>
+                        </div>
+                        <button class="btn btn-sm btn-outline-secondary border-0" onclick="refreshCurrentView()" title="Rafraîchir">
+                            <i class="fas fa-sync-alt"></i>
+                        </button>
+                    </div>
+                    <div id="playlist" style="height: calc(100% - 40px); overflow-y: auto; padding-right: 10px;">
+                        <!-- Content depends on view -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const audio = document.getElementById('audio');
+        audio.volume = 0.05; // Force volume initial très faible
+        const pb = document.getElementById('pb');
+        const playIcon = document.getElementById('playIcon');
+        const np = document.getElementById('now-playing');
+        let playlist = [];
+        let podcastList = [];
+        let messages = [];
+        let currentIndex = 0;
+        let messageIndex = 0;
+        let currentView = 'musique'; // 'musique' ou 'podcasts'
+
+        function switchView(view) {
+            currentView = view;
+            document.getElementById('viewMusique').classList.toggle('active', view === 'musique');
+            document.getElementById('viewPodcasts').classList.toggle('active', view === 'podcasts');
+            if (view === 'musique') renderPlaylist();
+            else renderPodcasts();
+        }
+
+        function refreshCurrentView() {
+            if (currentView === 'musique') loadTracks();
+            else loadPodcasts();
+        }
+
+        async function loadPodcasts() {
+            try {
+                const res = await fetch('/api/podcasts');
+                podcastList = await res.json();
+                if (currentView === 'podcasts') renderPodcasts();
+            } catch (err) { console.error(err); }
+        }
+
+        function renderPodcasts() {
+            const container = document.getElementById('playlist');
+            container.innerHTML = podcastList.map((p, i) => `
+                <div class="podcast-item" onclick="playPodcast(${i})">
+                    <div class="fw-bold text-white">${p.title}</div>
+                    <div class="small opacity-50">BY ${p.author} | ${new Date(p.created_at).toLocaleDateString()}</div>
+                    <div class="small mt-1 text-info">${p.description || ''}</div>
+                </div>
+            `).join('');
+        }
+
+        function playPodcast(index) {
+            const pod = podcastList[index];
+            audio.src = `/podcasts/${pod.filename}`;
+            np.textContent = `PODCAST : ${pod.title.toUpperCase()} // BY ${pod.author.toUpperCase()}`;
+            np.style.color = "#ffaa00";
+            audio.play();
+        }
+
+        async function loadTracks(forceReset = false) {
+            try {
+                const oldPlaylist = [...playlist];
+                const res = await fetch('/api/tracks');
+                if (!res.ok) throw new Error(`Erreur HTTP: ${res.status}`);
+                playlist = await res.json();
+                
+                renderPlaylist();
+
+                if (playlist.length > 0) {
+                    // Si on force le reset ou si c'est le premier chargement
+                    if (forceReset || !audio.src) {
+                        const randomStartIdx = Math.floor(Math.random() * playlist.length);
+                        loadTrack(randomStartIdx, true); // On démarre par une piste aléatoire
+                    } else {
+                        // On essaie de retrouver l'index du morceau qui était en cours de lecture par son filename
+                        const currentTrack = oldPlaylist[currentIndex];
+                        if (currentTrack) {
+                            const newIdx = playlist.findIndex(t => t.filename === currentTrack.filename);
+                            if (newIdx !== -1) {
+                                currentIndex = newIdx;
+                            } else {
+                                // Le morceau en cours a été supprimé ! On passe au suivant à la même position
+                                loadTrack(currentIndex % playlist.length, audio.paused === false);
+                            }
+                        }
+                    }
+                }
+            } catch (err) {
+                console.error("Erreur lors du chargement des pistes:", err);
+                np.textContent = "ERREUR: IMPOSSIBLE DE CONTACTER LE SERVEUR";
+            }
+        }
+
+        async function loadMessages() {
+            try {
+                const res = await fetch('/api/messages');
+                messages = await res.json();
+            } catch (err) {
+                console.error("Erreur messages:", err);
+            }
+        }
+
+        async function refreshGraphic() {
+            try {
+                const res = await fetch('/api/graphics/random');
+                if (!res.ok) throw new Error();
+                const data = await res.json();
+                const img = document.getElementById('scener-img');
+                const placeholder = document.getElementById('img-placeholder');
+                const info = document.getElementById('graphic-info');
+                
+                img.src = data.url;
+                info.textContent = `BY ${data.author || 'ANONYME'}`;
+                img.onload = () => {
+                    img.style.display = 'block';
+                    placeholder.style.display = 'none';
+                };
+            } catch (err) {
+                // Pas d'image ou erreur
+            }
+        }
+
+        async function uploadGraphic() {
+            const fileInput = document.getElementById('img-file');
+            if (fileInput.files.length === 0) return;
+
+            const fd = new FormData();
+            fd.append('graphic', fileInput.files[0]);
+
+            try {
+                const res = await fetch('/api/graphics/upload', { method: 'POST', body: fd });
+                const data = await res.json();
+                if (res.ok) {
+                    alert(data.message);
+                    refreshGraphic();
+                } else {
+                    alert(`Erreur : ${data.error}`);
+                }
+            } catch (err) {
+                alert("Erreur lors de l'envoi de l'image.");
+            }
+            fileInput.value = ""; // Reset
+        }
+
+        function updateMarquee() {
+            if (playlist.length === 0) return;
+            const track = playlist[currentIndex];
+            
+            // Si on a des messages et qu'on n'a pas encore fini de tous les montrer
+            if (messages.length > 0 && messageIndex < messages.length) {
+                const msgObj = messages[messageIndex];
+                np.textContent = `[MESSAGE] ${msgObj.text.toUpperCase()}`;
+                np.style.color = msgObj.color || '#ff00ff';
+                messageIndex++;
+            } else {
+                // On affiche la musique et on réinitialise l'index des messages pour le prochain cycle
+                np.textContent = `LIVE : ${track.original_name.toUpperCase()} // ARTIST: ${track.author.toUpperCase()}`;
+                np.style.color = '#39ff14';
+                messageIndex = 0; 
+            }
+        }
+
+        // On remplace loadTrack pour inclure l'info initiale
+        function loadTrack(index, autoplay) {
+            currentIndex = index;
+            const track = playlist[index];
+            const isStandard = ['.mp3', '.wav', '.ogg', '.m4a'].some(ext => track.filename.toLowerCase().endsWith(ext));
+            audio.src = isStandard ? `/uploads/${track.filename}` : `/api/stream/${track.filename}`;
+            
+            // Forcer l'affichage du titre au chargement d'une nouvelle piste
+            messageIndex = messages.length; 
+            updateMarquee();
+            
+            renderPlaylist();
+            
+            if (autoplay) {
+                audio.play().catch(err => {
+                    console.log("Autoplay bloqué par le navigateur, attente d'interaction.");
+                    np.textContent = "CLIQUEZ SUR PLAY POUR DÉMARRER LA RADIO";
+                    np.style.color = "#ffaa00";
+                });
+            }
+        }
+
+        function renderPlaylist() {
+            const container = document.getElementById('playlist');
+            container.innerHTML = playlist.map((t, i) => `
+                <div class="track-item ${i === currentIndex ? 'active' : ''}" onclick="loadTrack(${i}, true)">
+                    <div class="text-truncate flex-grow-1">
+                        <div class="fw-bold small text-white">${t.original_name}</div>
+                        <div class="opacity-50" style="font-size: 0.7rem;">BY ${t.author}</div>
+                    </div>
+                    <span class="badge bg-dark border border-secondary small ms-3">${t.format.toUpperCase()}</span>
+                </div>
+            `).join('');
+        }
+
+        function togglePlay() {
+            if (audio.paused) audio.play();
+            else audio.pause();
+        }
+
+        function next() {
+            let nextIdx = (currentIndex + 1) % playlist.length;
+            loadTrack(nextIdx, true);
+        }
+
+        function prev() {
+            let prevIdx = (currentIndex - 1 + playlist.length) % playlist.length;
+            loadTrack(prevIdx, true);
+        }
+
+        function seek(e) {
+            const percent = e.offsetX / e.target.offsetWidth;
+            audio.currentTime = audio.duration * percent;
+        }
+
+        audio.onplay = () => playIcon.className = 'fas fa-pause';
+        audio.onpause = () => playIcon.className = 'fas fa-play';
+        audio.onended = () => next();
+        audio.onerror = () => {
+            console.warn("Erreur de lecture, passage à la suivante...");
+            setTimeout(next, 1000);
+        };
+        audio.ontimeupdate = () => {
+            if (!isNaN(audio.duration)) {
+                const pct = (audio.currentTime / audio.duration) * 100;
+                pb.style.width = `${pct}%`;
+            }
+        };
+
+        document.getElementById('volume').oninput = (e) => audio.volume = e.target.value;
+
+        document.getElementById('uploadForm').onsubmit = async (e) => {
+            e.preventDefault();
+            const file = document.getElementById('file').files[0];
+            const authorInput = document.getElementById('author');
+            if (!file) return;
+
+            const fd = new FormData();
+            fd.append('music', file);
+            fd.append('author', authorInput.value);
+
+            try {
+                const res = await fetch('/api/upload', { method: 'POST', body: fd });
+                const data = await res.json();
+
+                if (!res.ok) {
+                    alert(`Erreur : ${data.error || "Échec de l'envoi"}`);
+                } else {
+                    alert("Transfert terminé !");
+                    authorInput.value = "";
+                    document.getElementById('file').value = "";
+                    loadTracks();
+                }
+            } catch (err) {
+                console.error("Erreur d'envoi:", err);
+                alert(`Erreur réseau ou serveur : ${err.message}. Vérifiez la console ou la taille du fichier.`);
+            }
+        };
+
+        document.getElementById('graphicUploadForm').onsubmit = async (e) => {
+            e.preventDefault();
+            const file = document.getElementById('img-file').files[0];
+            const authorInput = document.getElementById('graphicAuthor');
+            if (!file) return;
+
+            const fd = new FormData();
+            fd.append('graphic', file);
+            fd.append('author', authorInput.value);
+
+            try {
+                const res = await fetch('/api/graphics/upload', { method: 'POST', body: fd });
+                const data = await res.json();
+                if (res.ok) {
+                    alert(data.message);
+                    authorInput.value = "";
+                    document.getElementById('img-label').textContent = "CLIQUEZ POUR CHARGER UNE IMAGE";
+                    refreshGraphic();
+                } else {
+                    alert(`Erreur : ${data.error}`);
+                }
+            } catch (err) {
+                alert("Erreur lors de l'envoi de l'image.");
+            }
+            document.getElementById('img-file').value = "";
+        };
+
+        // --- TRACKER MODE LOGIC ---
+        let audioCtx, analyser, dataArray, bufferLength;
+        let trackerActive = false;
+        const canvas = document.getElementById('tracker-canvas');
+        const ctx = canvas.getContext('2d');
+        let patternLines = [];
+
+        function initAudioContext() {
+            if (audioCtx) return;
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            analyser = audioCtx.createAnalyser();
+            const source = audioCtx.createMediaElementSource(audio);
+            source.connect(analyser);
+            analyser.connect(audioCtx.destination);
+            analyser.fftSize = 256;
+            bufferLength = analyser.frequencyBinCount;
+            dataArray = new Uint8Array(bufferLength);
+        }
+
+        function toggleTrackerMode() {
+            trackerActive = !trackerActive;
+            const view = document.getElementById('tracker-view');
+            const btn = document.getElementById('trackerBtn');
+            
+            if (trackerActive) {
+                initAudioContext();
+                view.style.display = 'block';
+                btn.classList.add('active');
+                resizeCanvas();
+                requestAnimationFrame(drawTracker);
+            } else {
+                view.style.display = 'none';
+                btn.classList.remove('active');
+            }
+        }
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight - 110;
+        }
+        window.addEventListener('resize', resizeCanvas);
+
+        function drawTracker() {
+            if (!trackerActive) return;
+            requestAnimationFrame(drawTracker);
+
+            analyser.getByteFrequencyData(dataArray);
+            
+            // Background
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            const accentColor = '#00e5ff';
+            const green = '#39ff14';
+
+            // Draw Pattern Grid (Simulated)
+            ctx.font = '14px "Share Tech Mono"';
+            ctx.textBaseline = 'top';
+            const lineHeight = 22;
+            const numLines = Math.ceil(canvas.height / lineHeight);
+            
+            // Move pattern based on audio intensity (bass)
+            const bass = dataArray[0] / 255;
+            if (Math.random() < 0.3 + (bass * 0.5)) {
+                const hex = (Math.random() * 0xFFFFFF << 0).toString(16).padStart(6, '0').toUpperCase();
+                const note = ['C-', 'C#', 'D-', 'D#', 'E-', 'F-', 'F#', 'G-', 'G#', 'A-', 'A#', 'B-'][Math.floor(Math.random()*12)];
+                const oct = Math.floor(Math.random() * 4) + 2;
+                patternLines.unshift(`${note}${oct} 01 v${Math.floor(bass*64).toString().padStart(2, '0')} ${hex.substring(0,4)}`);
+                if (patternLines.length > numLines + 2) patternLines.pop();
+            }
+
+            // Draw the lines
+            ctx.textAlign = 'center';
+            const trackSpacing = canvas.width < 1000 ? 150 : 200;
+            const startX = (canvas.width / 2) - (trackSpacing * 1.5);
+
+            patternLines.forEach((line, i) => {
+                const y = 60 + (i * lineHeight);
+                if (y > canvas.height) return;
+
+                const opacity = 1 - (y / canvas.height);
+                ctx.fillStyle = i === 0 ? accentColor : `rgba(200, 200, 200, ${opacity})`;
+                if (i === 0 && bass > 0.6) ctx.fillStyle = green;
+                
+                // Draw 4 tracks
+                for(let t=0; t<4; t++) {
+                    const x = startX + (t * trackSpacing);
+                    ctx.fillText(line, x, y);
+                }
+            });
+
+            // Draw VU Meters (L / R)
+            const vuWidth = 25;
+            const vuHeight = canvas.height * 0.6;
+            const vuY = (canvas.height - vuHeight) / 2;
+            
+            [40, canvas.width - 65].forEach((x, idx) => {
+                ctx.strokeStyle = '#222';
+                ctx.strokeRect(x, vuY, vuWidth, vuHeight);
+                
+                const level = (idx === 0 ? dataArray[2] : dataArray[5]) / 255;
+                const h = level * vuHeight;
+                
+                const grad = ctx.createLinearGradient(0, vuY + vuHeight, 0, vuY);
+                grad.addColorStop(0, green);
+                grad.addColorStop(0.7, '#ffaa00');
+                grad.addColorStop(1, '#ff0000');
+                
+                ctx.fillStyle = grad;
+                ctx.fillRect(x + 2, vuY + vuHeight - h, vuWidth - 4, h);
+            });
+
+            // --- NOUVEAUX EFFETS BAS D'ÉCRAN ---
+            
+            // 1. Analyseur de Spectre Complet (Bas)
+            const barWidth = (canvas.width / bufferLength) * 2.5;
+            let barX = 0;
+            for (let i = 0; i < bufferLength; i++) {
+                const barHeight = (dataArray[i] / 255) * (canvas.height * 0.25);
+                
+                // Dégradé pour le spectre
+                const sGrad = ctx.createLinearGradient(0, canvas.height, 0, canvas.height - barHeight);
+                sGrad.addColorStop(0, 'rgba(0, 229, 255, 0.5)');
+                sGrad.addColorStop(1, 'rgba(255, 0, 255, 0.1)');
+                
+                ctx.fillStyle = sGrad;
+                ctx.fillRect(barX, canvas.height - barHeight, barWidth - 1, barHeight);
+                barX += barWidth;
+            }
+
+            // 2. Oscilloscope Intensifié (Glow)
+            const waveData = new Uint8Array(bufferLength);
+            analyser.getByteTimeDomainData(waveData);
+            
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = accentColor;
+            ctx.beginPath();
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = accentColor;
+            const sliceWidth = canvas.width / bufferLength;
+            let ox = 0;
+            ctx.moveTo(0, canvas.height * 0.8);
+            for (let i = 0; i < bufferLength; i++) {
+                const v = waveData[i] / 128.0;
+                const oy = (v * (canvas.height / 10)) + (canvas.height * 0.75);
+                ctx.lineTo(ox, oy);
+                ox += sliceWidth;
+            }
+            ctx.stroke();
+            ctx.shadowBlur = 0; // Reset glow
+
+            // 3. Scanlines Rétro (Bas)
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+            for(let i = canvas.height - 200; i < canvas.height; i += 4) {
+                ctx.fillRect(0, i, canvas.width, 2);
+            }
+
+            // 4. Flash Réactif aux Basses (Vignette)
+            if (bass > 0.8) {
+                ctx.fillStyle = 'rgba(0, 229, 255, 0.05)';
+                ctx.fillRect(0, canvas.height - 150, canvas.width, 150);
+            }
+
+            // Overlay Info
+            ctx.fillStyle = 'rgba(0, 229, 255, 0.5)';
+            ctx.textAlign = 'left';
+            ctx.fillText(`MODE: JUNGLE_TRACKER_V1 // BUF: ${bufferLength} // FPS: 60`, 20, 20);
+            ctx.textAlign = 'right';
+            ctx.fillText(`DECODING_LIVE_STREAM_Demoscene.fr...`, canvas.width - 20, 20);
+        }
+
+        // Initialisation
+        loadTracks();
+        loadMessages();
+        loadPodcasts();
+        refreshGraphic();
+
+        // Intervalles
+        setInterval(loadTracks, 60000);   // Recharger playlist (1 min)
+        setInterval(loadMessages, 120000); // Recharger messages (2 min)
+        setInterval(updateMarquee, 7000); // Alterner marquee (7 sec)
+        setInterval(refreshGraphic, 30000); // Changer image (30 sec)
+    </script>
+</body>
+</html>
+
